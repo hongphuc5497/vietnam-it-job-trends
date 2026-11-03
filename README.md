@@ -38,8 +38,10 @@ crawl (5 crawlers)        → data/raw/*.jsonl                      7.753 tin th
 
 Hai mô hình, hai việc khác nhau:
 
-- **Claude** (`claude-sonnet-4-6`, step-06) làm phần trích xuất mở — đọc mô tả
-  việc làm viết tự do và trả về JSON có cấu trúc.
+- **mimo-v2.6-pro** (Hermes model backend, step-05 và step-06) làm phần trích
+  xuất mở — gộp mô tả việc làm thành Markdown tiếng Anh sạch (step-05), rồi đọc
+  mô tả viết tự do và trả về JSON có cấu trúc (step-06). Chạy qua một endpoint
+  tương thích OpenAI (xem `llm.py`), không cần `ANTHROPIC_API_KEY`.
 - **Jev** (`jev-latest`, TypeSafe, step-04 và step-07) làm phần quyết định nhỏ
   lặp lại nhiều lần: lọc IT / không phải IT, rồi phân loại bốn chiều
   (`title_category`, `seniority_category`, `location_category`,
@@ -67,8 +69,10 @@ export TYPESAFE_API_KEY=...
 make classify
 make consolidate
 
-# 4. trích xuất bằng Claude (cần ANTHROPIC_API_KEY)
-export ANTHROPIC_API_KEY=sk-ant-...
+# 4. trích xuất bằng Hermes model backend (mimo-v2.6-pro)
+#    (make consolidate ở bước 3 cũng dùng backend này)
+#    mặc định đọc cấu hình Hermes (endpoint tương thích OpenAI);
+#    hoặc chỉ định bằng env: LLM_MODEL / LLM_BASE_URL / LLM_API_KEY
 make extract
 
 # 5. phân loại bốn chiều bằng Jev
@@ -101,7 +105,7 @@ Mỗi dòng trong `data/step-07-jev-extracted.jsonl` là một tin tuyển dụn
 | `description` | mô tả đầy đủ, cắt ở 12.000 ký tự khi gửi cho Jev |
 | `date_posted`, `employment_type`, `experience_months` | chỉ một số nguồn có |
 
-**Trường do Claude trích xuất** (`extracted_info`, step-06, đã dịch sang tiếng Anh):
+**Trường do LLM trích xuất** (`extracted_info`, step-06, đã dịch sang tiếng Anh):
 
 `title_cleaned` · `tech_stack[]` · `keywords[]`
 

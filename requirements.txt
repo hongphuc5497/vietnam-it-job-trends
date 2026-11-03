@@ -2,6 +2,6 @@ requests
 beautifulsoup4
 lxml
 pandas
-anthropic
+openai
 playwright
 matplotlib

@@ -1,27 +1,27 @@
 """Step 06: Extract structured information from consolidated job descriptions.
 
-Reads data/step-05-consolidated.jsonl and uses Claude to extract strictly
+Reads data/step-05-consolidated.jsonl and uses an LLM to extract strictly
 targeted structured data (Title, Tech Stack, Keywords) into a clean JSON schema.
 Ensures all extracted text is translated to English.
 
 Outputs data/step-06-extracted.jsonl with a resumable cache at data/step-06-cache.jsonl.
 
-Needs ANTHROPIC_API_KEY in the environment.
+Runs on the Hermes model backend (mimo-v2.6-pro via an OpenAI-compatible
+endpoint) — configured through LLM_MODEL / LLM_BASE_URL / LLM_API_KEY env vars
+or the Hermes config. See llm.py.
 """
 
 import argparse
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 
 from crawlers.base import read_jsonl
-from anthropic import AsyncAnthropic
 from tqdm import tqdm
 
-# Updated to Sonnet 4.6
-MODEL = "claude-sonnet-4-6"
+import llm
+
 CONCURRENCY_LIMIT = 20
 
 # Minimal JSON Schema based on your exact requirements
@@ -58,7 +58,7 @@ def build_user(row: dict) -> str:
 
 
 def parse_reply(text: str) -> dict:
-    """Safely parse the JSON, stripping markdown fences if Claude accidentally includes them."""
+    """Safely parse the JSON, stripping markdown fences if the model accidentally includes them."""
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
@@ -76,7 +76,6 @@ def parse_reply(text: str) -> dict:
 
 async def process_row(
     row: dict,
-    client: AsyncAnthropic,
     sem: asyncio.Semaphore,
     cache: dict,
     cache_path: Path,
@@ -84,14 +83,7 @@ async def process_row(
 ):
     async with sem:
         try:
-            msg = await client.messages.create(
-                model=MODEL,
-                max_tokens=1000,
-                system=SYSTEM,
-                messages=[{"role": "user", "content": build_user(row)}],
-            )
-
-            raw_text = "".join(b.text for b in msg.content if b.type == "text")
+            raw_text = await llm.complete(SYSTEM, build_user(row), max_tokens=1000)
             extracted_data = parse_reply(raw_text)
 
             merged = {**row, "extracted_info": extracted_data}
@@ -108,7 +100,7 @@ async def process_row(
 
 async def async_main() -> None:
     parser = argparse.ArgumentParser(
-        description="Extract minimal tech data with Claude Sonnet 4.6 in English"
+        description="Extract minimal tech data with the Hermes model backend (mimo-v2.6-pro) in English"
     )
     parser.add_argument(
         "--in", dest="src", type=str, default="data/step-05-consolidated.jsonl"
@@ -136,18 +128,15 @@ async def async_main() -> None:
         print("all cached")
         return
 
-    print(f"Will bill ~{len(todo)} Claude calls (model {MODEL}).", flush=True)
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise SystemExit("Set ANTHROPIC_API_KEY first.")
+    print(f"Will bill ~{len(todo)} LLM calls (model {llm.get_model()}).", flush=True)
 
-    client = AsyncAnthropic()
     sem = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
     cache_path = Path(args.cache)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     with tqdm(total=len(todo), desc="Extracting JSON", unit="job") as pbar:
-        tasks = [process_row(row, client, sem, cache, cache_path, pbar) for row in todo]
+        tasks = [process_row(row, sem, cache, cache_path, pbar) for row in todo]
         await asyncio.gather(*tasks)
 
     out = Path(args.out)
