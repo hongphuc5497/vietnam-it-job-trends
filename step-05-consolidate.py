@@ -8,21 +8,22 @@ meaningful requirement, responsibility, qualification, and concrete benefit stay
 Outputs data/consolidated.jsonl (metadata kept, `description` replaced by the
 clean version), with a resumable cache at data/consolidate-cache.jsonl.
 
-Needs ANTHROPIC_API_KEY in the environment.
+Runs on the Hermes model backend (mimo-v2.6-pro via an OpenAI-compatible
+endpoint) — configured through LLM_MODEL / LLM_BASE_URL / LLM_API_KEY env vars
+or the Hermes config. See llm.py.
 """
 
 import argparse
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 
 from crawlers.base import read_jsonl
-from anthropic import AsyncAnthropic
 from tqdm import tqdm
 
-MODEL = "claude-haiku-5-5"
+import llm
+
 CONCURRENCY_LIMIT = 32  # Adjust based on your API rate limits
 
 SYSTEM = (
@@ -94,7 +95,6 @@ def parse_reply(text: str) -> str:
 
 async def process_row(
     row: dict,
-    client: AsyncAnthropic,
     sem: asyncio.Semaphore,
     cache: dict,
     cache_path: Path,
@@ -102,14 +102,7 @@ async def process_row(
 ):
     async with sem:
         try:
-            msg = await client.messages.create(
-                model=MODEL,
-                max_tokens=2000,
-                system=SYSTEM,
-                messages=[{"role": "user", "content": build_user(row)}],
-            )
-
-            raw_text = "".join(b.text for b in msg.content if b.type == "text")
+            raw_text = await llm.complete(SYSTEM, build_user(row), max_tokens=2000)
 
             clean = parse_reply(raw_text)
             merged = {**row, "description": clean}
@@ -127,7 +120,7 @@ async def process_row(
 
 async def async_main() -> None:
     parser = argparse.ArgumentParser(
-        description="Consolidate tech descriptions with Claude Haiku 5.5"
+        description="Consolidate tech descriptions with the Hermes model backend (mimo-v2.6-pro)"
     )
     parser.add_argument("--in", dest="src", type=str, default="data/step-04-tech.jsonl")
     parser.add_argument("--out", type=str, default="data/step-05-consolidated.jsonl")
@@ -153,11 +146,8 @@ async def async_main() -> None:
         print("all cached")
         return
 
-    print(f"Will bill ~{len(todo)} Claude calls (model {MODEL}).", flush=True)
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise SystemExit("Set ANTHROPIC_API_KEY first.")
+    print(f"Will bill ~{len(todo)} LLM calls (model {llm.get_model()}).", flush=True)
 
-    client = AsyncAnthropic()
     sem = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
     cache_path = Path(args.cache)
@@ -165,7 +155,7 @@ async def async_main() -> None:
 
     # Initialize tqdm progress bar
     with tqdm(total=len(todo), desc="Consolidating jobs", unit="job") as pbar:
-        tasks = [process_row(row, client, sem, cache, cache_path, pbar) for row in todo]
+        tasks = [process_row(row, sem, cache, cache_path, pbar) for row in todo]
         await asyncio.gather(*tasks)
 
     # Write final consolidated output
